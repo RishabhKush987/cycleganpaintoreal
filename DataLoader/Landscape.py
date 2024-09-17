@@ -4,19 +4,21 @@ from torchvision.datasets.folder import default_loader
 from torchvision.datasets.utils import download_url
 from torch.utils.data import Dataset
 from torchvision.io import read_image 
-import torchvision.transforms as trans
+from PIL import Image
+import torchvision.transforms as transforms
 import scipy.io
 from pathlib import Path
 import glob
+import random
 
 
-class ImageDataset(Dataset):
-    def __init__(self, root, transforms_=None, unaligned=False, mode='train'):
-        self.transform = transforms.Compose(transforms_)
+class LandscapeDataset(Dataset):
+    def __init__(self, root, transforms_=None, unaligned=False, datatype='train'):
+        self.transform = transforms_
         self.unaligned = unaligned
 
-        self.files_A = sorted(glob.glob(os.path.join(root, '%s/A' % mode) + '/*.*'))
-        self.files_B = sorted(glob.glob(os.path.join(root, '%s/B' % mode) + '/*.*'))
+        self.files_A = sorted(glob.glob(os.path.join(root, datatype+'A') + '/*'))
+        self.files_B = sorted(glob.glob(os.path.join(root, datatype+'B') + '/*'))
 
     def __getitem__(self, index):
         item_A = self.transform(Image.open(self.files_A[index % len(self.files_A)]))

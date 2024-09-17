@@ -18,10 +18,10 @@ import cv2
 import os
 import torchvision.transforms as trans
 from torch.utils.data import Dataset
-from DatasetLoader.Landscape import LandscapeDataset
+from util import LambdaLR
+from DataLoader.Landscape import LandscapeDataset
 from Model.cyclegan import Generator
 from Model.cyclegan import Discriminator
-from Metrics.PerceptualLoss import VGGPerceptualLoss
 
     
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -29,9 +29,12 @@ batch_size_train = 16
 batch_size_test = 16
 torch.manual_seed(0)
                                       
+transform_ = transforms.Compose([
+    transforms.ToTensor()
+])
 
-dataset_flower_train = LandscapeDataset('./datasets/landscape2photo/', datatype = 'train')
-train_loader = torch.utils.data.DataLoader(dataset = dataset, batch_size=batch_size_train, shuffle=False)
+dataset_landscape_train = LandscapeDataset('./datasets/landscape2photo/',transforms_ = transform_ ,datatype = 'train')
+train_loader = torch.utils.data.DataLoader(dataset = dataset_landscape_train, batch_size=batch_size_train, shuffle=False)
 
 
 
@@ -39,7 +42,6 @@ netG_A2B = Generator(3, 3)
 netG_B2A = Generator(3, 3)
 netD_A = Discriminator(3)
 netD_B = Discriminator(3)
-
 
 params = list(netG_A2B.parameters()) + list(netG_B2A.parameters())
 
@@ -66,81 +68,90 @@ print('training started')
 # best = 999999999
 for epoch in range(epochs):
     start_time = time.time()
-
+    loss_Gen = 0
+    loss_Disc = 0
+    loss_identity = 0
+    loss_cycle = 0
+    num_batches = 0
     print('epochs {}'.format(epoch+1))
-    for data in train_loader: 
+    for i, data in enumerate(train_loader): 
+      real_A = data['A']
+      real_B = data['B']
 
-        real_A = data['A']
-        real_B = data['B']
+      optimizer_G.zero_grad()
 
-        optimizer_G.zero_grad()
+      same_B = netG_A2B(real_B)
+      loss_identity_B = criterion_identity(same_B, real_B)*5.0
+      # G_B2A(A) should equal A if real A is fed
+      same_A = netG_B2A(real_A)
+      loss_identity_A = criterion_identity(same_A, real_A)*5.0
 
-        same_B = netG_A2B(real_B)
-        loss_identity_B = criterion_identity(same_B, real_B)*5.0
-        # G_B2A(A) should equal A if real A is fed
-        same_A = netG_B2A(real_A)
-        loss_identity_A = criterion_identity(same_A, real_A)*5.0
+      # GAN loss
+      fake_B = netG_A2B(real_A)
+      pred_fake = netD_B(fake_B)
+      loss_GAN_A2B = criterion_GAN(pred_fake, target_real)
 
-        # GAN loss
-        fake_B = netG_A2B(real_A)
-        pred_fake = netD_B(fake_B)
-        loss_GAN_A2B = criterion_GAN(pred_fake, target_real)
+      fake_A = netG_B2A(real_B)
+      pred_fake = netD_A(fake_A)
+      loss_GAN_B2A = criterion_GAN(pred_fake, target_real)
 
-        fake_A = netG_B2A(real_B)
-        pred_fake = netD_A(fake_A)
-        loss_GAN_B2A = criterion_GAN(pred_fake, target_real)
+      # Cycle loss
+      recovered_A = netG_B2A(fake_B)
+      loss_cycle_ABA = criterion_cycle(recovered_A, real_A)*10.0
 
-        # Cycle loss
-        recovered_A = netG_B2A(fake_B)
-        loss_cycle_ABA = criterion_cycle(recovered_A, real_A)*10.0
+      recovered_B = netG_A2B(fake_A)
+      loss_cycle_BAB = criterion_cycle(recovered_B, real_B)*10.0
 
-        recovered_B = netG_A2B(fake_A)
-        loss_cycle_BAB = criterion_cycle(recovered_B, real_B)*10.0
+      # Total loss
+      loss_G = loss_identity_A + loss_identity_B + loss_GAN_A2B + loss_GAN_B2A + loss_cycle_ABA + loss_cycle_BAB
+      loss_G.backward()
+      
+      optimizer_G.step()
 
-        # Total loss
-        loss_G = loss_identity_A + loss_identity_B + loss_GAN_A2B + loss_GAN_B2A + loss_cycle_ABA + loss_cycle_BAB
-        loss_G.backward()
-        
-        optimizer_G.step()
+      optimizer_D_A.zero_grad()
 
-        optimizer_D_A.zero_grad()
+      # Real loss
+      pred_real = netD_A(real_A)
+      loss_D_real = criterion_GAN(pred_real, target_real)
 
-        # Real loss
-        pred_real = netD_A(real_A)
-        loss_D_real = criterion_GAN(pred_real, target_real)
+      # Fake loss
+      fake_A = fake_A_buffer.push_and_pop(fake_A)
+      pred_fake = netD_A(fake_A.detach())
+      loss_D_fake = criterion_GAN(pred_fake, target_fake)
 
-        # Fake loss
-        fake_A = fake_A_buffer.push_and_pop(fake_A)
-        pred_fake = netD_A(fake_A.detach())
-        loss_D_fake = criterion_GAN(pred_fake, target_fake)
+      # Total loss
+      loss_D_A = (loss_D_real + loss_D_fake)*0.5
+      loss_D_A.backward()
 
-        # Total loss
-        loss_D_A = (loss_D_real + loss_D_fake)*0.5
-        loss_D_A.backward()
+      optimizer_D_A.step()
+      ###################################
 
-        optimizer_D_A.step()
-        ###################################
+      ###### Discriminator B ######
+      optimizer_D_B.zero_grad()
 
-        ###### Discriminator B ######
-        optimizer_D_B.zero_grad()
+      # Real loss
+      pred_real = netD_B(real_B)
+      loss_D_real = criterion_GAN(pred_real, target_real)
+      
+      # Fake loss
+      fake_B = fake_B_buffer.push_and_pop(fake_B)
+      pred_fake = netD_B(fake_B.detach())
+      loss_D_fake = criterion_GAN(pred_fake, target_fake)
 
-        # Real loss
-        pred_real = netD_B(real_B)
-        loss_D_real = criterion_GAN(pred_real, target_real)
-        
-        # Fake loss
-        fake_B = fake_B_buffer.push_and_pop(fake_B)
-        pred_fake = netD_B(fake_B.detach())
-        loss_D_fake = criterion_GAN(pred_fake, target_fake)
+      # Total loss
+      loss_D_B = (loss_D_real + loss_D_fake)*0.5
+      loss_D_B.backward()
 
-        # Total loss
-        loss_D_B = (loss_D_real + loss_D_fake)*0.5
-        loss_D_B.backward()
+      optimizer_D_B.step()
+      num_batches+=1
+      loss_Gen+=loss_G
+      loss_Disc+=(loss_D_A + loss_D_B)
+      loss_identity+=(loss_identity_A + loss_identity_B)
+      ########################
 
-        optimizer_D_B.step()
-        ########################
+      print('loss_G :{:.5f}, loss_G_identity :{:.5f}, loss_G_GAN : {:.5f}, loss_G_cycle : {:.5f}, loss_D : {:.5f}'.format(loss_G, (loss_identity_A + loss_identity_B), (loss_GAN_A2B + loss_GAN_B2A), (loss_cycle_ABA + loss_cycle_BAB), (loss_D_A + loss_D_B)))
+  
 
-    print('loss_G :{:.5f}, loss_G_identity :{:.5f}, loss_G_GAN : {:.5f}, loss_G_cycle : {:.5f}, loss_D : {:.5f}'.format(loss_G, (loss_identity_A + loss_identity_B), (loss_GAN_A2B + loss_GAN_B2A), (loss_cycle_ABA + loss_cycle_BAB), (loss_D_A + loss_D_B)))
     end_time = time.time()
     print('Time taken:{:.4f} minutes'.format((end_time - start_time)/60))
     torch.save(netG_A2B, './saved_models/netG_A2B.pt')
