@@ -33,16 +33,19 @@ torch.manual_seed(0)
 dataset_flower_train = LandscapeDataset('./datasets/landscape2photo/', datatype = 'train')
 train_loader = torch.utils.data.DataLoader(dataset = dataset, batch_size=batch_size_train, shuffle=False)
 
-params = list(netG_A2B.parameters()) + list(netG_B2A.parameters())
 
-optimizer_G = torch.optim.Adam(params, lr=0.0002, betas=(0.5, 0.999))
-optimizer_D_A = torch.optim.Adam(netD_A.parameters(), lr=0.0002, betas=(0.5, 0.999))
-optimizer_D_B = torch.optim.Adam(netD_B.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
 netG_A2B = Generator(3, 3)
 netG_B2A = Generator(3, 3)
 netD_A = Discriminator(3)
 netD_B = Discriminator(3)
+
+
+params = list(netG_A2B.parameters()) + list(netG_B2A.parameters())
+
+optimizer_G = torch.optim.Adam(params, lr=0.0002, betas=(0.5, 0.999))
+optimizer_D_A = torch.optim.Adam(netD_A.parameters(), lr=0.0002, betas=(0.5, 0.999))
+optimizer_D_B = torch.optim.Adam(netD_B.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
 criterion_GAN = torch.nn.MSELoss()
 criterion_cycle = torch.nn.L1Loss()
