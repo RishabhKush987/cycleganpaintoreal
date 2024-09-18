@@ -21,7 +21,28 @@ from DataLoader.Landscape import LandscapeDataset
 from Model.cyclegan import Generator
 from Model.cyclegan import Discriminator
 from transformers import SamModel, SamProcessor
+from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
+from diffusers import ControlNetModel, StableDiffusionControlNetPipeline
 
+
+def show_output(result_dict):
+    #  if axes:
+    #     ax = axes
+    #  else:
+    #     ax = plt.gca()
+    #     ax.set_autoscale_on(False)
+     sorted_result = sorted(result_dict, key=(lambda x: x['area']), reverse=True)
+     # Plot for each segment area
+     for val in sorted_result:
+        mask = val['segmentation']
+        img = np.ones((mask.shape[0], mask.shape[1], 3))
+        color_mask = np.random.random((1, 3)).tolist()[0]
+        for i in range(3):
+            img[:,:,i] = color_mask[i]
+            plt.imshow(np.dstack((img, mask*0.5)))
+
+CHECKPOINT_PATH='/content/cycleganpaintoreal/sam_vit_h_4b8939.pth'
+MODEL_TYPE = "vit_h"
 
 batch_size_train = 16
 transform_ = transforms.Compose([
@@ -33,29 +54,37 @@ test_loader = torch.utils.data.DataLoader(dataset = dataset_landscape_train, bat
 
 count_train = len(test_loader.dataset)
 print(count_train)
-netG_A2B  = torch.load('./saved_models/netG_A2B.pt')
+# netG_A2B  = torch.load('./saved_models/netG_A2B.pt')
 # netG_B2A  = torch.load('./saved_models/netG_B2A.pt')
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-model = SamModel.from_pretrained("facebook/sam-vit-huge").to(device)
-processor = SamProcessor.from_pretrained("facebook/sam-vit-huge")
 
-input_points = [[[256, 256]]]  # 2D location of a window in the image
 
+sam = sam_model_registry[MODEL_TYPE](checkpoint=CHECKPOINT_PATH).to(device)
+
+
+mask_generator = SamAutomaticMaskGenerator(sam)
+
+controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-seg")
+pipeline = StableDiffusionControlNetPipeline.from_pretrained(
+  "runwayml/stable-diffusion-v1-5", controlnet=controlnet
+)
 
 for i, (data) in enumerate(test_loader, 0):
-    recon = netG_A2B(data['A'])
-    print(recon.size())
-    im = Image.fromarray(cv2.resize((recon[0].permute(1,2,0).detach().cpu().numpy()*255).astype(np.uint8),(256,256)))
-    im.save("./recon.png")
-    inputs = processor(data['A'][0], input_points=input_points, return_tensors="pt").to(device)
-    with torch.no_grad():
-        outputs = model(**inputs)
+    # recon = netG_A2B(data['A'])
+    # print(recon.size())
+    # im = Image.fromarray(cv2.resize((recon[0].permute(1,2,0).detach().cpu().numpy()*255).astype(np.uint8),(256,256)))
+    # im.save("./recon.png")
+    output_mask = mask_generator.generate(data['A'][0].permute(1,2,0).cpu().numpy())
+    # plot = plt.figure(figsize=(20,20))
+    # axes[0].imshow(data['A'][0].permute(1,2,0))
+    show_output(output_mask)
+    plt.savefig('foo.png')
+    img = Image.open("foo.png")
+    image = pipeline("landscape", img, num_inference_steps=20).images[0]
 
-    masks = processor.image_processor.post_process_masks(
-        outputs.pred_masks.cpu(), inputs["original_sizes"].cpu(), inputs["reshaped_input_sizes"].cpu()
-    )
-    scores = outputs.iou_scores
-    print(scores)
+    image.save('./realimage.png')
+
+
     break;    
 
